@@ -46,6 +46,17 @@ Never sit idle waiting on something slow (GitHub Actions/CI, a release, a review
 Before returning "waiting", do every part of the task that does not depend on the condition (other platforms, docs, tests, screenshots, the next PR): implement and let CI verify rather than wait for a host. Waiting on another PR to merge is not a reason to stop: build on its branch or merge it locally, and note the dependency.
 The machine then runs other work and wakes you later with your notes; check the condition first, then continue from where you left off.`;
 
+/** The signature rule: `[owner] signature = "off"` drops it entirely (nothing the fleet posts reads as AI-generated),
+ *  otherwise it goes on comments and reviews only — never on a PR title or body. */
+function signatureRule(agent: string, host: string, cfg: Cfg): string {
+  if (/^(off|no|none|false)$/i.test(String(cfg.owner?.signature ?? ""))) return `This fleet does not sign what it posts: never add an AI attribution — no signature line, no "AI agent acting for" text, no 🤖 badge — to a PR title, a PR body, an issue, a review comment, Slack, Discord, email or an OKR entry. The owner reads a signature as noise.
+Outside the hub you are Noop: never use your agent name (${agentName(agent)}) or any other agent's name in GitHub text, commits or messages.`;
+  return `Anything you post outside the hub as a comment — GitHub issue and PR review comments, Slack, Discord, email, OKR entries — must end with this exact line, after a blank line:
+${signature(agent, host, cfg)}
+Never put that line, or any other AI attribution, in a PR title or a PR body: the owner reads a signed description as a mass-generated PR and it tells the reviewer nothing. PR titles and bodies are plain engineering text — what changed, why, how it was verified.
+Outside the hub you are Noop: never use your agent name (${agentName(agent)}) or any other agent's name in GitHub text, commits or messages.`;
+}
+
 export function buildPrompt(meta: Record<string, string>, body: string, cfg: Cfg, resourceNote = ""): string {
   const agent = meta.agent || "lead";
   const host = meta.claimed_by || "?";
@@ -74,12 +85,9 @@ ${recentJournal() || "(empty)"}
 # Fleet roster (for follow-up routing)
 ${rosterLine()}
 
-# External signature (MANDATORY)
-Anything you post outside the hub as a comment — GitHub issue and PR review comments, Slack, Discord, email, OKR entries — must end with this exact line, after a blank line:
-${signature(agent, host, cfg)}
-Never put that line, or any other AI attribution, in a PR title or a PR body: the owner reads a signed description as a mass-generated PR and it tells the reviewer nothing. PR titles and bodies are plain engineering text — what changed, why, how it was verified.
+# External signature
+${signatureRule(agent, host, cfg)}
 Git commits you create must carry the trailer:  Agent: ${agent}
-Outside the hub you are Noop: never use your agent name (${agentName(agent)}) or any other agent's name in GitHub text, commits or messages.
 
 # Resource budget
 ${resourceNote}

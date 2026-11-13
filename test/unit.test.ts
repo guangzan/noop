@@ -40,6 +40,22 @@ test("the signature goes on comments only, never on a PR title or body", () => {
   expect(block).not.toContain("PR descriptions");
 });
 
+test("`[owner] signature = \"off\"` drops the signature from the prompt", () => {
+  const { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } = require("node:fs");
+  const file = P("config.toml");
+  const before = existsSync(file) ? readFileSync(file, "utf8") : null;
+  mkdirSync(P("agents"), { recursive: true });
+  writeFileSync(file, `[owner]\nsignature = "off"\n`);
+  try {
+    const prompt = buildPrompt({ id: "T-1", title: "x", agent: "lead" }, "b", loadConfig());
+    expect(prompt).toContain("does not sign what it posts");
+    expect(prompt).not.toContain("🤖 [Noop]");
+    expect(prompt).not.toContain("must end with this exact line");
+  } finally {
+    if (before === null) rmSync(file, { force: true }); else writeFileSync(file, before);
+  }
+});
+
 test("result parsing", () => {
   expect(parseResult('blah\n```json\n{"status":"done","summary":"ok"}\n```').status).toBe("done");
   expect(parseResult("no block").status).toBe("failed");
