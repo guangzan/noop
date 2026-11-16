@@ -53,6 +53,13 @@ export function classify(t: Task, ctx: Ctx): Verdict | null {
   // 2. blocked on a card that is already closed → the answer never reached it
   if (t.folder === "blocked" && m.decision && ctx.decision(m.decision) === "closed") return v(`answered:${m.decision}`, "resume", [L(`${m.decision} was answered but the task did not continue`, `${m.decision} 已回答但任务没有继续`)]);
   if (t.folder === "blocked" && m.decision && ctx.decision(m.decision) === "open") return null; // the owner has the card
+  // 2b. parked on the owner: a human wait is a state, not a stall. waits.ts gives it no deadline and no timer, so a
+  // clock-based card here would only add a second unanswered card about the first one (2026-11-14: 167 identical
+  // "long run on <host>" cards, every one a routine copy waiting on the same unanswered card).
+  if (m.wait_kind === "human") return null;
+  if (t.folder === "blocked" && (m.waiting_on ?? "").match(/D-\d+/g)?.some((id) => ctx.decision(id) === "open")) return null;
+  // a wake the runner already scheduled is progress too (CI waits cap at 120 minutes in waits.ts)
+  if (m.wake_at && Date.parse(m.wake_at) > ctx.now) return null;
   const age = (ctx.now - startedAt(m)) / 3_600_000;
   const wakes = Number(m.wakes ?? 0);
   const reasons: string[] = [];
@@ -82,7 +89,8 @@ export function classify(t: Task, ctx: Ctx): Verdict | null {
 export function sweepPlatform(tasks: Task[], vs: Verdict[]): Verdict[] {
   const causes = new Set(vs.filter((v) => v.action === "escalate" && v.cause.startsWith("platform:")).map((v) => v.cause));
   const have = new Set(vs.map((v) => v.id));
-  return tasks.filter((t) => t.folder === "waiting" && !t.meta.children && !have.has(t.meta.id) && causes.has(`platform:${platform(t.meta)}`))
+  // a task parked on the owner is not evidence that its platform is missing (T-1477)
+  return tasks.filter((t) => t.folder === "waiting" && !t.meta.children && t.meta.wait_kind !== "human" && !have.has(t.meta.id) && causes.has(`platform:${platform(t.meta)}`))
     .map((t) => ({ id: t.meta.id, cause: `platform:${platform(t.meta)}`, reasons: [L(`also needs ${platform(t.meta)}`, `同样需要 ${platform(t.meta)}`)], action: "escalate" as const }));
 }
 
@@ -122,11 +130,29 @@ export function cardFor(cause: string, items: { id: string; title: string; reaso
   };
 }
 
+/** PRs a waiting task exists to land: full PR URLs in its spec (body before the first run log) or waiting_on, plus
+    "<Repo> #N" in its title when the task has a repo. Pure: unit-tested. */
+export function trackedPrs(m: Meta, body = ""): string[] {
+  const spec = `${m.title ?? ""}\n${body.split("\n## Run ")[0]}\n${m.waiting_on ?? ""}`;
+  const out = new Set<string>();
+  for (const x of spec.matchAll(/https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g)) out.add(`${x[1]}#${x[2]}`);
+  const repo = m.repo?.match(/^[\w.-]+\/[\w.-]+$/)?.[0];
+  const t = repo && (m.title ?? "").match(/#(\d+)/);
+  if (t) out.add(`${repo}#${t[1]}`);
+  return [...out];
+}
+
+/** A merge is a wake-up event, not proof that all acceptance criteria are met. */
+function prState(ref: string): string {
+  const [repo, n] = ref.split("#");
+  try { return Bun.spawnSync(["gh", "pr", "view", n, "-R", repo, "--json", "state", "-q", ".state"], { stdout: "pipe", stderr: "ignore" }).stdout.toString().trim(); } catch { return ""; }
+}
+
 // ------------------------------------------------------------------ IO: one supervisor pass over the hub
 const decisionState = (id: string) => existsSync(P("decisions", "open", `${id}.md`)) ? "open" as const
   : existsSync(P("decisions", "closed", `${id}.md`)) ? "closed" as const : undefined;
 
-export function supervise(cfg: Cfg, host: string, t = Date.now()) {
+export function supervise(cfg: Cfg, host: string, t = Date.now(), readPrState = prState) {
   const s = cfg.supervisor ?? {};
   const retired: string[] = s.retired_hosts ?? cfg.fleet?.retired_hosts ?? [];
   const ctx: Ctx = {
@@ -136,7 +162,19 @@ export function supervise(cfg: Cfg, host: string, t = Date.now()) {
   const tasks: (Task & { path: string })[] = (["waiting", "blocked"] as const).flatMap((folder) =>
     list(P("tasks", folder), /^T-.*\.md$/).map((path) => ({ path, folder, ...readDoc(path) })));
   const verdicts: Verdict[] = [];
-  const counts = { reroute: 0, resume: 0, requeue: 0, cards: 0 };
+  const counts = { reroute: 0, resume: 0, requeue: 0, cards: 0, merged: 0 };
+  let merged = 0;
+  for (const task of [...tasks]) { // Wake once per merged PR set, preserving any unfinished acceptance work.
+    if (task.meta.children || ctx.decision(task.meta.decision ?? "") === "open") continue;
+    const prs = trackedPrs(task.meta, task.body);
+    const signature = prs.slice().sort().join(",");
+    if (!prs.length || task.meta.supervisor_merged_prs === signature || !prs.every((r) => readPrState(r) === "MERGED")) continue;
+    writeDoc(P("tasks", "inbox", `${task.meta.id}.md`), { ...task.meta, status: undefined, finished: undefined, resumed: "yes", supervisor_merged_prs: signature, wake_at: undefined, wait_kind: undefined, claimed_by: undefined },
+      `${task.body ?? ""}\n\n> Supervisor (${now()}): ${prs.join(", ")} merged while this task waited. Check remaining acceptance criteria and follow-ups; return done if the goal is met, otherwise continue the unfinished work. Do not wait for these PRs to merge again.\n`);
+    unlinkSync(task.path);
+    tasks.splice(tasks.indexOf(task), 1);
+    journal(host, L(`🧭 supervisor: ${task.meta.id} resumed, ${prs.join(", ")} already merged`, `🧭 supervisor: ${task.meta.id} 唤醒核对收尾，${prs.join("、")} 已合并`)); merged++;
+  }
   for (const task of tasks) {
     const v = classify(task, ctx);
     if (!v) continue;
@@ -181,6 +219,7 @@ export function supervise(cfg: Cfg, host: string, t = Date.now()) {
     journal(host, `🧭 supervisor: ${CAUSE_LABEL(cause)} → ${did}（${fresh.join(", ")}）`); counts.cards++;
     cards.push({ supervisor_cause: cause, tasks: fresh.join(",") });
   }
-  journal(host, `🧭 supervisor ran: ${tasks.length} waiting/blocked, rerouted ${counts.reroute}, resumed ${counts.resume}, requeued ${counts.requeue}, cards ${counts.cards}`);
+  counts.merged = merged;
+  journal(host, `🧭 supervisor ran: resumed ${merged} with merged PRs, ${tasks.length} waiting/blocked, rerouted ${counts.reroute}, resumed ${counts.resume}, requeued ${counts.requeue}, cards ${counts.cards}`);
   return counts;
 }

@@ -63,6 +63,30 @@ test("keep going first: retired host → reroute, answered card → resume, no w
   expect(classify(task({ id: "T-5", children: "T-6" }), ctx())).toBeNull(); // delegated parent
 });
 
+test("parked on the owner: human waits and blocked waits naming an open card are never clock-escalated", () => {
+  const late = { created: new Date(NOW - 5 * H).toISOString() }; // well past maxAgeHours
+  expect(classify(task({ id: "T-1", ...late, wait_kind: "human" }), ctx())).toBeNull();
+  expect(classify(task({ id: "T-2", ...late, wait_kind: "human" }, "blocked"), ctx())).toBeNull();
+  expect(classify(task({ id: "T-3", ...late, waiting_on: "等待主人答复 decisions/open/D-9.md" }, "blocked"),
+    ctx({ decision: (d) => (d === "D-9" ? "open" : undefined) }))).toBeNull();
+  // an answered card still resumes first (the refresh path), even when parked on the owner
+  const r = classify(task({ id: "T-4", ...late, wait_kind: "human", decision: "D-7" }, "blocked"),
+    ctx({ decision: (d) => (d === "D-7" ? "closed" : undefined) }))!;
+  expect(r.action).toBe("resume");
+  // a wake the runner already scheduled is progress; an overdue one is a stall again
+  expect(classify(task({ id: "T-5", ...late, wake_at: new Date(NOW + H).toISOString() }), ctx())).toBeNull();
+  expect(classify(task({ id: "T-6", ...late, wake_at: new Date(NOW - H).toISOString() }), ctx())!.action).toBe("escalate");
+});
+
+test("a platform card does not sweep in tasks that are parked on the owner", () => {
+  const stuck = task({ id: "T-1", requires: "os:macos", wakes: "4" });
+  const parked = task({ id: "T-2", requires: "os:macos", wait_kind: "human" });
+  const vs = [classify(stuck, ctx())!];
+  expect(vs[0].cause).toBe("platform:os:macos");
+  expect(sweepPlatform([stuck, parked], vs)).toEqual([]); // the human wait is not evidence that macOS is missing
+  expect(sweepPlatform([stuck, task({ id: "T-3", requires: "os:macos" })], vs).map((v) => v.id)).toEqual(["T-3"]);
+});
+
 test("groups by cause: all macOS-desktop tasks share one card", () => {
   const vs = ["T-1", "T-2", "T-3"].map((id) => classify(task({ id, requires: "os:macos", wakes: "5" }), ctx())!);
   vs.push(classify(task({ id: "T-9", requires: "os:linux", wakes: "4", claimed_by: "lb" }), ctx())!);
@@ -136,4 +160,37 @@ test("macOS host online + wait_check unrunnable on the primary: hand back to the
   const m = { id: "T-1", requires: "os:macos", created: new Date(NOW - 10 * H).toISOString(), waiting_on: "x", wait_check: "test -f /Users/j/done" };
   expect(classify(task(m), ctx())!.action).toBe("reroute");
   expect(classify(task({ ...m, supervisor_requeued: "yes" }), ctx())!.action).toBe("escalate");
+});
+
+import { trackedPrs } from "../src/supervisor";
+test("trackedPrs reads PR urls from spec and repo #N from title, not from run logs", () => {
+  const body = "PR: https://github.com/huacnlee/noop/pull/182 (branch x)\n\n## Run 2026\nsee https://github.com/longbridge/nsh/pull/9";
+  expect(trackedPrs({ title: "Noop #182：验收并合并", repo: "huacnlee/noop" }, body)).toEqual(["huacnlee/noop#182"]);
+  expect(trackedPrs({ title: "NSH #1846：放大后变糊" }, "no pr yet")).toEqual([]);
+});
+
+
+test("merged PRs wake a task once for acceptance checks instead of completing it", () => {
+  const id = "T-9406-test";
+  const waiting = P("tasks", "waiting", `${id}.md`);
+  const inbox = P("tasks", "inbox", `${id}.md`);
+  const done = P("tasks", "done", `${id}.md`);
+  try {
+    writeDoc(waiting, { id, title: "Verify screenshot", waiting_on: "Need screenshot", wait_kind: "human", created: new Date(NOW).toISOString() }, "PR: https://github.com/huacnlee/noop/pull/182");
+    supervise({}, "test", NOW, () => "OPEN");
+    expect(existsSync(waiting)).toBe(true);
+    supervise({}, "test", NOW, () => "MERGED");
+    expect(existsSync(waiting)).toBe(false);
+    expect(existsSync(done)).toBe(false);
+    const resumed = readDoc(inbox);
+    expect(resumed.meta.resumed).toBe("yes");
+    expect(resumed.body).toContain("Check remaining acceptance criteria");
+    rmSync(inbox);
+    writeDoc(waiting, { ...resumed.meta, waiting_on: "Need screenshot" }, resumed.body!);
+    supervise({}, "test", NOW, () => { throw new Error("Must not recheck a handled merge"); });
+    expect(existsSync(waiting)).toBe(true);
+    expect(existsSync(inbox)).toBe(false);
+  } finally {
+    for (const path of [waiting, inbox, done]) rmSync(path, { force: true });
+  }
 });
