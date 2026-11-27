@@ -78,6 +78,10 @@ export const hostName = (cfg: Cfg): string =>
 export const now = () => new Date().toISOString().replace(/\.\d+Z$/, "Z");
 export const today = () => new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD local
 export const hhmm = () => new Date().toLocaleTimeString("sv-SE").slice(0, 5);
+/** "11:08" for any UTC timestamp, in this machine's time zone: stored in UTC, read by people in local time. */
+export const hm = (at: string | number | Date = new Date()) => new Date(at).toLocaleTimeString("sv-SE", { hour12: false }).slice(0, 5);
+/** This machine's zone name, for prompts and labels ("Asia/Shanghai"). */
+export const localTimeZone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; } };
 
 // ------------------------------------------------------------------ data sync (src/sync.ts)
 // All data mutations are serialized so parallel workers in one daemon never race on the mirror.

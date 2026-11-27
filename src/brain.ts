@@ -12,7 +12,7 @@ import { type Account, accountEnv, accounts, claudeAuthArgs, classify, reportFai
 import { channelPrompt } from "./channels";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
-import { DATA, HOME_DIR, L, P, loadConfig, _commitPush, _pull, journal, locked, now, readDoc, writeDoc } from "./core";
+import { DATA, HOME_DIR, L, P, loadConfig, _commitPush, _pull, journal, localTimeZone, locked, now, readDoc, today, writeDoc } from "./core";
 import { type Ev, type FileRow, type ToolStore, type WriteOp, isWrite, listDecisions, listRoutines, listTasks, similarOpenTasks, editMemoryEntry, runTool, toolsFor, writeOp } from "../cloud/src/tools";
 
 // ---------------------------------------------------------------- the local tool store (the data repo on this machine)
@@ -92,7 +92,7 @@ export function dataActs(host: string, io = { pull: _pull, push: _commitPush }):
       await pull();
       const f = P(...op.file.split("/"));
       mkdirSync(join(f, ".."), { recursive: true });
-      const line = `- ${op.text.replace(/\s*\n\s*/g, " ")} _(owner, ${now().slice(0, 10)}, via chat)_\n`;
+      const line = `- ${op.text.replace(/\s*\n\s*/g, " ")} _(owner, ${today()}, via chat)_\n`;
       const prev = existsSync(f) ? readFileSync(f, "utf8") : "";
       if (prev.includes(op.text.trim())) return { ok: true, file: op.file, note: "already there" };
       writeFileSync(f, prev && !prev.endsWith("\n") ? `${prev}\n${line}` : prev + line);
@@ -304,6 +304,13 @@ export type BrainIn = {
 };
 export type BrainOut = { reply: string; calls: { tool: string; args: any; ok: boolean; result?: any; error?: string }[]; rounds: number; ms: { first_reply?: number; model: number[]; total: number }; fallback?: boolean };
 
+/** "2026-11-27 11:08, Asia/Shanghai (UTC+08:00)": the brain quotes the owner's own clock, never UTC. */
+export function localStamp(at = new Date()) {
+  const off = -at.getTimezoneOffset(), abs = Math.abs(off);
+  const zone = `${off < 0 ? "-" : "+"}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
+  return `${at.toLocaleString("sv-SE")}, ${localTimeZone()} (UTC${zone}); the channel's timestamps are in this zone.`;
+}
+
 /** The context block: what the brain sees before deciding (open work, decisions, relevant memory, the channel). */
 export function context(st: ToolStore, m: BrainIn): string {
   const open = listTasks(st, "open", "", 40);
@@ -316,7 +323,7 @@ export function context(st: ToolStore, m: BrainIn): string {
   const mem = words.length ? st.list("memory/").flatMap((f) => f.text.split("\n").filter((l) => l.startsWith("-") || l.startsWith("|")).filter((l) => words.some((w) => l.toLowerCase().includes(w))).map((l) => `${f.path}: ${l.slice(0, 300)}`)).slice(0, 12) : [];
   const s = st.status() ?? {};
   return [
-    `Now: ${new Date().toISOString()}`,
+    `Now: ${localStamp()}`,
     channelPrompt(),
     "When calling create_task, set channels by these goals. Existing slugs or {name, goal} for a new work topic; [] for none.",
     `Routines: ${listRoutines(st).map((r) => `${r.name} (${r.every ?? r.at ?? "?"}, ${r.agent}${r.enabled ? "" : ", off"})`).join("; ") || "(none)"}`,

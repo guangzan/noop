@@ -363,6 +363,16 @@ test("recentChat: the channel before an owner message, without the message itsel
   expect(recentChat("x", { limit: 1 }).length).toBe(1);
 });
 
+test("recentChat: a timestamp is the machine's local time, not the UTC slice of the ISO string", async () => {
+  const { appendEvent, recentChat } = await import("../src/server");
+  const { hm } = await import("../src/core");
+  const ts = new Date().toISOString();
+  appendEvent({ from: "owner", kind: "owner", text: "时间显示", ts });
+  const line = recentChat("", { limit: 1 })[0];
+  expect(line.startsWith(`[${hm(ts)}]`)).toBe(true);
+  if (new Date(ts).getTimezoneOffset() !== 0) expect(line.slice(1, 6)).not.toBe(ts.slice(11, 16));
+});
+
 test("pickTask: a task no machine here can run (needs another OS) never holds back the ones behind it", async () => {
   const { pickTask, writeDoc, P } = await import("../src/core");
   const other = process.platform === "win32" ? "os:linux" : "os:windows";

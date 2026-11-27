@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { type Model, addFollowUp, context, dataActs, localStore, reopenTask, parseTurn, think } from "../src/brain";
+import { type Model, addFollowUp, context, dataActs, localStamp, localStore, reopenTask, parseTurn, think } from "../src/brain";
 import { type Cfg, DATA, readDoc } from "../src/core";
 import { claudeDisallowed } from "../src/gates";
 import { runTool, taskInfo, toolsFor, TOOLS, type WriteOp, listRoutines } from "../cloud/src/tools";
@@ -180,6 +180,14 @@ test("context: open work, decisions, relevant memory, channel and reply target",
     "reply to the team's message about T-0184", "answered D-0099"]) expect(c).toContain(s);
   expect(parseTurn('noise {"reply":"hi"} noise')).toEqual({ calls: [], reply: "hi" });
   expect(parseTurn("no json")).toBeNull();
+});
+
+test("localStamp: the brain reads the machine's clock, never a bare UTC timestamp", () => {
+  const at = new Date("2026-11-27T03:05:00Z");
+  const s = localStamp(at);
+  expect(s).toContain(at.toLocaleString("sv-SE"));
+  expect(s).toMatch(/UTC[+-]\d{2}:\d{2}/);
+  expect(s).not.toContain("T03:05");
 });
 
 test("context: a proposals card lists its items, so the owner's words can be turned into item numbers", () => {

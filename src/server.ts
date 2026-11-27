@@ -18,7 +18,7 @@ import { basename, join } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { accountsInfo } from "./accounts";
 import { cliCommand, startModel } from "./runner";
-import { type Cfg, DATA, JOURNAL_DAY, L, P, _commitPush, isEnglish, allowedClis, hostName, hostPriority, locked, list, loadConfig, onlineHosts, readDoc, UPDATE_REQUEST } from "./core";
+import { type Cfg, DATA, JOURNAL_DAY, L, P, _commitPush, hm, isEnglish, allowedClis, hostName, hostPriority, locked, list, loadConfig, onlineHosts, readDoc, UPDATE_REQUEST } from "./core";
 import { mediaResponse, ownerAttachments, sniffImage, uploadId, uploadProblem } from "../cloud/src/uploads";
 import { timingSafeEqual } from "node:crypto";
 import { readable, validPath } from "../cloud/src/files";
@@ -109,7 +109,7 @@ export function recentChat(text = "", opts: { limit?: number; hours?: number; ch
   return evs.slice(-(opts.limit ?? 12)).map((e) => {
     const who = e.from === "owner" ? "owner" : e.from;
     const t = e.text.length > 700 ? `${e.text.slice(0, 700)}…` : e.text;
-    return `[${e.ts.slice(11, 16)}] ${who}${e.ref ? ` (${e.ref})` : ""}: ${t.replace(/\n+/g, " ⏎ ")}`;
+    return `[${hm(e.ts)}] ${who}${e.ref ? ` (${e.ref})` : ""}: ${t.replace(/\n+/g, " ⏎ ")}`;
   });
 }
 

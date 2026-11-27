@@ -5,7 +5,7 @@
 import { existsSync, statSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type Cfg, L, hostName, journal, HOME_DIR } from "./core";
+import { type Cfg, L, hm, hostName, journal, HOME_DIR } from "./core";
 import { notify } from "./notify";
 import { cachedSecrets } from "./secrets";
 
@@ -240,7 +240,7 @@ export async function reportFailure(a: Account, kind: Failure, output: string, c
   const gateway = kind === "auth" && usesGateway(a);
   if (kind === "quota") {
     st.cooldown_until = quotaCooldownUntil(st.cooldown_until, output);
-    journal(host, `${key(a)} hit usage limit → cooldown until ${st.cooldown_until.slice(11, 16)}Z`);
+    journal(host, `${key(a)} hit usage limit → cooldown until ${hm(st.cooldown_until)}`);
     if (st.told !== st.cooldown_until) {
       st.told = st.cooldown_until;
       const same = accounts(cfg, a.cli).filter((other) => key(other) !== key(a) && usable(other)).map((other) => `${other.cli}/${other.name}`);
