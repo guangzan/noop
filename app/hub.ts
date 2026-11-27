@@ -456,7 +456,7 @@ const stem = (p: string) => p.slice(p.lastIndexOf("/") + 1).replace(/\.md$/i, ""
 /** The four groups of the 团队规则与记忆 list, from what /api/files/list returned for each prefix. */
 export function groupRules(lists: Record<string, DataFile[]>): RuleGroup[] {
   const md = (pre: string) => (lists[pre] ?? []).filter((f) => /\.md$/i.test(f.path));
-  const day = (f: DataFile) => (f.updated ?? "").slice(0, 10);
+  const day = (f: DataFile) => (f.updated ? dayKey(f.updated) : ""); // the file's own day, local like the chat
   const plain = (f: DataFile, title = stem(f.path)) => ({ path: f.path, title, detail: day(f) });
   const agents = md("agents/")
     .map((f) => f.path.match(/^agents\/([^/]+)\/(profile|memory)\.md$/i))
